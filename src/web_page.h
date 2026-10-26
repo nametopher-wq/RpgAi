@@ -1644,7 +1644,7 @@ btnLoad.addEventListener('click', async () => {
 
     const replayAsync = async () => {
       if (turns.length > 0) {
-        addMsg('msg-system', '── Storia precedente (' + turns.length + ' turni) ──');
+        addMsg('msg-system', '── Previous story (' + turns.length + (turns.length === 1 ? ' turn' : ' turns') + ') ──');
         // Images that predate all turns
         if (imgAfterTurn[-1]) await loadAndShowImages(imgAfterTurn[-1]);
         for (let i = 0; i < turns.length; i++) {
@@ -1653,9 +1653,9 @@ btnLoad.addEventListener('click', async () => {
           if (t.narration)    addMsg('msg-narration', t.narration);
           if (imgAfterTurn[i]) await loadAndShowImages(imgAfterTurn[i]);
         }
-        addMsg('msg-system', '── Fine storia precedente ──');
+        addMsg('msg-system', '── End of previous story ──');
       } else {
-        addMsg('msg-system', 'Partita ripristinata.');
+        addMsg('msg-system', 'Game restored.');
       }
     };
     replayAsync();
