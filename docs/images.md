@@ -273,8 +273,27 @@ Access to FLUX 1.1 Pro, SDXL and others.
 
 ### OpenAI (`openai`) — t2i and i2i
 DALL-E 3 / GPT-image. i2i via the multipart `/v1/images/edits` endpoint.
+Canonical api.openai.com API only — for gateways, use `custom`.
 ```bash
 --img-provider openai --img-key sk-YOUR_KEY --img-t2i-model gpt-image-1
+```
+
+### Custom (`custom`) — generic OpenAI-compatible gateways
+For routers that expose image models outside the canonical Images API
+(e.g. **zveno.ai**, OpenRouter-style endpoints). The provider auto-detects
+the dialect on first use and remembers it:
+- t2i: `/v1/images/generations` → minimal `/v1/images` → chat-completions
+  (`modalities: ["image"]`, image back in `choices[].message.images[]`)
+- i2i: multipart `/v1/images/edits` → chat-completions with the source image
+  inline (OpenRouter-style editing)
+
+Use image-capable model IDs from your gateway (for zveno: `google/gemini-*-image`,
+`openai/gpt-5-image-mini`, `openai/gpt-5.4-image-2`; note `openai/gpt-5-image`
+currently returns empty responses there).
+```bash
+--img-provider custom --img-url https://api.zveno.ai --img-key YOUR_KEY \
+--img-t2i-model google/gemini-2.5-flash-image \
+--img-i2i-model google/gemini-3-pro-image
 ```
 
 ### DashScope (`dashscope`) — Alibaba Cloud
