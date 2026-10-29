@@ -17,7 +17,9 @@ Text handling:
   Джон) — the models' alphabet filter would otherwise drop them.
 - Unsupported languages (e.g. 'it' — Silero has no Italian model) fall back
   to the server's --language with accented Latin folded to ASCII ("Così" →
-  "Cosi"), so an approximation is still voiced; the substitution is logged.
+  "Cosi"), so an approximation is still voiced; Italian text additionally
+  gets a phonetic pass for the English fallback ("Ciao" → "Chiao"). The
+  substitution is logged.
 - If the model's alphabet filter leaves nothing to synthesize, /synthesize
   returns 422 with an explanatory message (use the 'xtts' provider for
   languages outside Silero's set: ru en de es fr ua uz).
@@ -158,6 +160,47 @@ def fold_accents(text: str) -> str:
         folded = folded.replace(k, v)
     return folded
 
+# Italian → English phonetic transliteration, applied when an 'it' request
+# falls back to a Latin-alphabet model. Accent folding alone keeps every
+# letter voiced but the English model would read it with English phonetics
+# ("ciao" as "kiao"); these digraph rules make the approximation recognisably
+# Italian ("ciao" → "chiao", "lasagne" → "lasanye", "perché" → "perke").
+# Single-pass longest-match so a rule's output is never rescanned ("ghi"
+# must stay "gi", not become "ji").
+_IT_PAIRS = [
+    ("gli", "ly"),
+    ("gn", "ny"),
+    ("ghe", "ge"), ("ghi", "gi"),
+    ("che", "ke"), ("chi", "ki"),
+    ("sce", "she"), ("sci", "shi"),
+    ("cia", "cha"), ("cie", "che"), ("cio", "cho"), ("ciu", "chu"),
+    ("gia", "ja"), ("gie", "je"), ("gio", "jo"), ("giu", "ju"),
+    ("ge", "je"), ("gi", "ji"),
+    ("ce", "che"), ("ci", "chi"),
+]
+
+def _emit_like(matched: str, out: str) -> str:
+    if matched.isupper():
+        return out.upper()
+    if matched[:1].isupper():
+        return out.capitalize()
+    return out
+
+def transliterate_it_en(text: str) -> str:
+    out = []
+    i = 0
+    lower = text.lower()
+    while i < len(text):
+        for pair, en in _IT_PAIRS:
+            if lower.startswith(pair, i):
+                out.append(_emit_like(text[i:i+len(pair)], en))
+                i += len(pair)
+                break
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
 def _supported_list() -> str:
     return ", ".join(sorted(LANGUAGE_MODELS))
 
@@ -278,7 +321,11 @@ async def synthesize(request: Request):
     if fell_back:
         # Unsupported original language: fold accented Latin to plain ASCII so
         # the fallback model voices at least an approximation ("Cosi parlo").
+        # Italian gets an extra phonetic pass so the approximation is
+        # recognisably Italian ("Ciao" -> "Chiao").
         text = fold_accents(text)
+        if requested == "it":
+            text = transliterate_it_en(text)
     elif lang == "ru":
         # Russian game: Latin names/words would be dropped by the alphabet
         # filter — transliterate them to Cyrillic instead.
