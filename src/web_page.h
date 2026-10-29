@@ -833,9 +833,9 @@ std::string main_page = R"HTML(<!DOCTYPE html>
               <h4>TTS Server</h4>
               <span class="server-status">
                 <span id="dot-tts-locale" class="server-dot"></span>
-                <span id="label-tts-locale">—</span>
+                <span style="color:var(--dim)">XTTS:</span> <span id="label-tts-locale">—</span>
                 <span id="dot-silero-locale" class="server-dot" style="margin-left:10px"></span>
-                <span id="label-silero-locale">—</span>
+                <span style="color:var(--dim)">Silero:</span> <span id="label-silero-locale">—</span>
               </span>
             </div>
             <div class="sfield">
@@ -1014,6 +1014,7 @@ let histIdx      = -1;
 /* ================================================================
    Utilities
    ================================================================ */
+function gv(id) { const el = document.getElementById(id); return el ? el.value : ''; }
 function addMsg(cls, text) {
   const d = document.createElement('div');
   d.className = 'msg ' + cls;
@@ -2441,7 +2442,6 @@ function onPyEnvChange() {
 }
 
 async function saveSettings() {
-  const gv = id => { const el = document.getElementById(id); return el ? el.value : ''; };
   const imgProv = gv('s-img-provider');
   const payload = {
     provider:         gv('s-provider'),
