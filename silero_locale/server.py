@@ -128,14 +128,19 @@ def _load_language(language: str):
     return _models[language]
 
 def _apply_tts(model, text: str, rate: int, voice: str):
-    """apply_tts signature differs across silero generations: packaged
-    v3/v4 models are self-contained, older ones take model=model."""
+    """apply_tts signature differs across silero generations: current models
+    take speaker=, older ones voice=, the oldest also model=."""
+    try:
+        return model.apply_tts(text=text, sample_rate=rate, speaker=voice)
+    except TypeError as e:
+        if "speaker" not in str(e):
+            raise
     try:
         return model.apply_tts(text=text, sample_rate=rate, voice=voice)
     except TypeError as e:
-        if "model" in str(e):
-            return model.apply_tts(text=text, model=model, sample_rate=rate, voice=voice)
-        raise
+        if "model" not in str(e):
+            raise
+    return model.apply_tts(text=text, model=model, sample_rate=rate, voice=voice)
 
 def _pick_sample_rate(model, hub_rate, probe_voice) -> int:
     """Silero models accept 8000/24000/48000; keep the requested rate if it
