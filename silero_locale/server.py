@@ -114,20 +114,29 @@ def _load_language(language: str):
                          trust_repo=True)
     # Recent hubconf versions return (model, symbols, sample_rate, ...);
     # older ones returned the model alone.
-    model = res[0] if isinstance(res, tuple) else res
+    hub_rate = None
+    if isinstance(res, tuple):
+        model = res[0]
+        if len(res) > 2 and isinstance(res[2], int):
+            hub_rate = res[2]
+    else:
+        model = res
     model.to(DEVICE)
-    sample_rate = _pick_sample_rate(model)
+    sample_rate = _pick_sample_rate(model, hub_rate, speakers[0])
     _models[language] = (model, speakers, sample_rate)
     print(f"[startup] '{model_id}' ready (rate={sample_rate}).")
     return _models[language]
 
-def _pick_sample_rate(model) -> int:
-    """Silero models accept 8000/24000/48000; keep the requested rate if valid."""
-    for rate in (ARGS.sample_rate, 24000, 8000):
+def _pick_sample_rate(model, hub_rate, probe_voice) -> int:
+    """Silero models accept 8000/24000/48000; keep the requested rate if it
+    works. The probe uses a deterministic speaker — 'random' does not exist
+    in every model version (e.g. v4_ru) and would fail the probe."""
+    candidates = [r for r in (ARGS.sample_rate, hub_rate, 24000, 8000) if r]
+    for rate in candidates:
         try:
             with torch.no_grad():
                 probe = model.apply_tts(text="test", model=model, sample_rate=rate,
-                                        voice="random")
+                                        voice=probe_voice)
             if probe is not None and len(probe) > 0:
                 return rate
         except Exception:
