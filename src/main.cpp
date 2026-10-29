@@ -4680,10 +4680,12 @@ sol::table result = f_result;
         // GET /api/tts/voices  →  proxy to TTS server /voices
         // -----------------------------------------------------------------
         CROW_ROUTE(app, "/api/tts/voices")([&](const crow::request& req) {
-            // ?url= overrides saved cfg so user can refresh before hitting Save
+            // ?url= overrides saved cfg so user can refresh before hitting Save;
+            // ?language= is forwarded so catalog voices filter by language
             std::string override_url = req.url_params.get("url") ? req.url_params.get("url") : "";
+            std::string lang = req.url_params.get("language") ? req.url_params.get("language") : "";
             std::string base_url = !override_url.empty() ? override_url : tts_base_url();
-            std::string url = base_url + "/voices";
+            std::string url = base_url + "/voices" + (lang.empty() ? "" : "?language=" + lang);
             std::string body;
             CURL* curl = curl_easy_init();
             if (!curl) return crow::response(500, "{\"voices\":[]}");
