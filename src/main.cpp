@@ -648,10 +648,18 @@ static bool http_ping(const std::string& url) {
 // Base URL of the active TTS server, per cfg.ttsProvider.
 // Each provider has its own local server; the matching *Url setting overrides
 // the provider default. xtts = tts_locale (8004), piper = piper_locale (8007).
-static std::string tts_base_url() {
-    if (cfg.ttsProvider == "piper")
+static std::string tts_base_url(const std::string& provider) {
+    if (provider == "piper")
         return cfg.piperUrl.empty() ? "http://localhost:8007" : cfg.piperUrl;
     return cfg.ttsUrl.empty() ? "http://localhost:8004" : cfg.ttsUrl;
+}
+static std::string tts_base_url() { return tts_base_url(cfg.ttsProvider); }
+
+// ?provider= override for the /api/tts* proxy routes: lets the web UI preview
+// a provider selected in Settings before the user hits Save (mirrors ?url=).
+static std::string tts_provider_override(const crow::request& req) {
+    const char* p = req.url_params.get("provider");
+    return (p && *p) ? p : cfg.ttsProvider;
 }
 
 // BCP-47 language tag sent to the TTS server: the configured --lang when set,
@@ -4638,7 +4646,8 @@ sol::table result = f_result;
                 return res;
             }
             // POST to the active TTS server's /synthesize with form data
-            std::string base_url = tts_base_url();
+            // (?provider= previews a Settings selection before Save)
+            std::string base_url = tts_base_url(tts_provider_override(req));
             std::string tts_url  = base_url + "/synthesize";
             // URL-encode text so UTF-8 chars (è, à, ì…) survive form-urlencoded transfer
             char* esc = curl_easy_escape(nullptr, text.c_str(), (int)text.size());
@@ -4681,10 +4690,11 @@ sol::table result = f_result;
         // -----------------------------------------------------------------
         CROW_ROUTE(app, "/api/tts/voices")([&](const crow::request& req) {
             // ?url= overrides saved cfg so user can refresh before hitting Save;
-            // ?language= is forwarded so catalog voices filter by language
+            // ?provider= previews a Settings selection; ?language= filters voices
             std::string override_url = req.url_params.get("url") ? req.url_params.get("url") : "";
             std::string lang = req.url_params.get("language") ? req.url_params.get("language") : "";
-            std::string base_url = !override_url.empty() ? override_url : tts_base_url();
+            std::string base_url = !override_url.empty() ? override_url
+                                 : tts_base_url(tts_provider_override(req));
             std::string url = base_url + "/voices" + (lang.empty() ? "" : "?language=" + lang);
             std::string body;
             CURL* curl = curl_easy_init();

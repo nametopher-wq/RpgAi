@@ -2582,10 +2582,12 @@ function splitSentences(text) {
   return text.split(/(?<=[.!?])\s+/u).map(s => s.trim()).filter(Boolean);
 }
 
-async function fetchTTSBuffer(text, voice) {
-  const key = voice + '|' + text;
+async function fetchTTSBuffer(text, voice, provider) {
+  const key = (provider || '') + '|' + voice + '|' + text;
   if (ttsCache.has(key)) return ttsCache.get(key).slice(0); // clone: decodeAudioData detaches
-  const r = await fetch('/api/tts?' + new URLSearchParams({ text, voice }));
+  const p = new URLSearchParams({ text, voice });
+  if (provider) p.set('provider', provider); // preview a Settings selection before Save
+  const r = await fetch('/api/tts?' + p.toString());
   if (!r.ok) return null;
   const buf = await r.arrayBuffer();
   ttsCache.set(key, buf);
@@ -2624,11 +2626,16 @@ async function playTTS(text, btn) {
 async function refreshTtsVoices(showAlert) {
   const sel = document.getElementById('s-tts-narrator-voice');
   const current = sel.value;
-  // The URL field of the ACTIVE provider acts as pre-save override
+  // Preview the SELECTED provider (before Save): its URL field acts as
+  // override, and the provider itself is passed through to the engine proxy.
   const prov = (document.getElementById('s-tts-provider') || {}).value || 'xtts';
-  const urlId = prov === 'piper' ? 's-piper-url' : 's-tts-url';
+  const urlId = prov === 'silero' ? 's-silero-url'
+              : prov === 'piper' ? 's-piper-url'
+              : 's-tts-url';
   const urlOverride = (document.getElementById(urlId) || {}).value || '';
-  const params = urlOverride ? '?url=' + encodeURIComponent(urlOverride) : '';
+  const q = new URLSearchParams({ provider: prov });
+  if (urlOverride) q.set('url', urlOverride);
+  const params = '?' + q.toString();
   try {
     const r = await fetch('/api/tts/voices' + params);
     if (!r.ok) {
@@ -2653,10 +2660,11 @@ async function refreshTtsVoices(showAlert) {
 async function testNarratorVoice() {
   const voice = document.getElementById('s-tts-narrator-voice').value;
   if (!voice) { alert('Select a narrator voice first, then click Refresh.'); return; }
+  const prov = (document.getElementById('s-tts-provider') || {}).value || '';
   const textEl = document.getElementById('s-tts-test-text');
-  const text = (textEl && textEl.value.trim()) || 'Ciao. Sono il narratore di questa avventura.';
+  const text = (textEl && textEl.value.trim()) || 'Hello. I am the narrator of this adventure.';
   try {
-    const buf = await fetchTTSBuffer(text, voice);
+    const buf = await fetchTTSBuffer(text, voice, prov);
     if (!buf) { alert('TTS server error or unreachable.'); return; }
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const audioBuf = await ctx.decodeAudioData(buf);
