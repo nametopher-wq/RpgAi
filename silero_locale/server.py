@@ -107,11 +107,14 @@ def _load_language(language: str):
         raise HTTPException(400, f"Unsupported language '{language}'. Supported: {supported}")
     model_id, speakers = LANGUAGE_MODELS[language]
     print(f"[startup] Loading silero '{model_id}' on {DEVICE} ...")
-    model = torch.hub.load("snakers4/silero-models",
-                           model="silero_tts",
-                           language=language,
-                           speaker=model_id,
-                           trust_repo=True)
+    res = torch.hub.load("snakers4/silero-models",
+                         model="silero_tts",
+                         language=language,
+                         speaker=model_id,
+                         trust_repo=True)
+    # Recent hubconf versions return (model, symbols, sample_rate, ...);
+    # older ones returned the model alone.
+    model = res[0] if isinstance(res, tuple) else res
     model.to(DEVICE)
     sample_rate = _pick_sample_rate(model)
     _models[language] = (model, speakers, sample_rate)
