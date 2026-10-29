@@ -137,3 +137,6 @@ catalog/chars_describe_state.json
 catalog/describe_state.json.bak
 catalog/placement_state.json
 catalog/walls.json
+
+# piper_locale — downloaded voice models (fetched at runtime)
+piper_locale/models/
