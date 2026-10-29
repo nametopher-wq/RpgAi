@@ -30,6 +30,16 @@ work unchanged):
 
 import argparse
 import io
+import os
+
+# python-build-standalone / bare venv interpreters on Windows do not trust the
+# system CA store, so downloading model weights fails with a certificate
+# verification error. Point urllib at certifi's bundle when it is installed.
+try:
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+except ImportError:
+    pass
 
 import numpy as np
 import soundfile as sf
