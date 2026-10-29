@@ -211,12 +211,21 @@ Different providers can be used for each.
 
 ## Local server URLs
 
-Optional local Python servers, manageable from the web UI (start/stop, install deps). Each has its own repo folder (`tts_locale/`, `faceswap_locale/`) with its own `server.py`.
+Optional local Python servers, manageable from the web UI (start/stop, install deps). Each has its own repo folder (`tts_locale/`, `piper_locale/`, `faceswap_locale/`) with its own `server.py`.
 
 ```bash
---tts-url <url>          # XTTS v2 TTS server (voice synthesis, /api/tts)
+--tts-provider <n>       # xtts | piper (default: xtts)
+--tts-url <url>          # XTTS v2 TTS server, port 8004 (voice cloning, GPU-friendly)
+--piper-url <url>        # Piper TTS server, port 8007 (fixed voices, light CPU, ONNX)
 --faceswap-url <url>     # faceswap_locale server
 ```
+
+The TTS servers speak the same HTTP contract (`/synthesize`, `/voices`, `/health`), so the engine proxy (`/api/tts`) and the web UI work unchanged with either. `--tts-provider` selects which one `/api/tts` forwards to; the choice is also available in the web Settings (TTS card).
+
+- **xtts** — Coqui XTTS v2, zero-shot voice cloning from a 6–30 s reference WAV (`POST /voices/add`). Highest quality, slow on CPU.
+- **piper** — Piper TTS (VITS + espeak-ng, MIT voices from rhasspy/piper-voices). Fixed pretrained voices, near-instant on CPU, light install (ONNX, no torch). Languages: en ru it fr de es pt zh. An unsupported language (e.g. `ja`) returns 422 with an explanation — use `xtts` for those.
+
+The language sent to the TTS server follows `--lang` (previously hardcoded to `it`; when `--lang` is unset the default remains `it`).
 
 ---
 
