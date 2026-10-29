@@ -251,8 +251,13 @@ struct Config {
     std::string ttsLocaleArgs;        // extra CLI args forwarded on tts_locale start
     std::string ttsLocaleEnvType;     // per-server env override (empty = use global)
     std::string ttsLocaleEnvPath;
-    std::string ttsUrl;               // TTS server base URL (default: http://localhost:8004)
+    std::string ttsProvider  = "xtts"; // xtts | piper — selects the local TTS server
+    std::string ttsUrl;               // XTTS server base URL (default: http://localhost:8004)
     std::string ttsNarratorVoice;     // voice_id used for narration (must exist in TTS server voices/)
+    std::string piperUrl;             // Piper server base URL (default: http://localhost:8007)
+    std::string piperLocaleArgs;      // extra CLI args forwarded on piper_locale start
+    std::string piperLocaleEnvType;   // per-server env override (empty = use global)
+    std::string piperLocaleEnvPath;
 
     // Session tracking — set on first save, used to filter images on load
     std::string sessionStart;       // ISO8601 UTC timestamp of first turn in this session
@@ -456,6 +461,10 @@ static json config_to_json() {
     j["tts_locale_env_path"]  = cfg.ttsLocaleEnvPath;
     j["tts_url"]              = cfg.ttsUrl;
     j["tts_narrator_voice"]   = cfg.ttsNarratorVoice;
+    j["piper_url"]               = cfg.piperUrl;
+    j["piper_locale_args"]       = cfg.piperLocaleArgs;
+    j["piper_locale_env_type"]   = cfg.piperLocaleEnvType;
+    j["piper_locale_env_path"]   = cfg.piperLocaleEnvPath;
     j["max_history"]      = cfg.maxHistory;
     j["max_retries"]      = cfg.maxRetries;
     j["save_mode"]        = (cfg.saveMode == SaveMode::FULL) ? "full" : "last";
@@ -536,6 +545,10 @@ static void apply_settings_json(const json& j) {
     gs("tts_locale_env_path",  cfg.ttsLocaleEnvPath);
     gs("tts_url",              cfg.ttsUrl);
     gs("tts_narrator_voice",   cfg.ttsNarratorVoice);
+    gs("piper_url",               cfg.piperUrl);
+    gs("piper_locale_args",       cfg.piperLocaleArgs);
+    gs("piper_locale_env_type",   cfg.piperLocaleEnvType);
+    gs("piper_locale_env_path",   cfg.piperLocaleEnvPath);
     gi("max_history",     cfg.maxHistory);
     gi("max_retries",     cfg.maxRetries);
     if (j.contains("save_mode") && j["save_mode"].is_string())
@@ -630,6 +643,21 @@ static bool http_ping(const std::string& url) {
     CURLcode rc = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
     return rc == CURLE_OK;
+}
+
+// Base URL of the active TTS server, per cfg.ttsProvider.
+// Each provider has its own local server; the matching *Url setting overrides
+// the provider default. xtts = tts_locale (8004), piper = piper_locale (8007).
+static std::string tts_base_url() {
+    if (cfg.ttsProvider == "piper")
+        return cfg.piperUrl.empty() ? "http://localhost:8007" : cfg.piperUrl;
+    return cfg.ttsUrl.empty() ? "http://localhost:8004" : cfg.ttsUrl;
+}
+
+// BCP-47 language tag sent to the TTS server: the configured --lang when set,
+// Italian as before when unset (historic default of the /api/tts route).
+static std::string tts_language() {
+    return cfg.langCode.empty() ? "it" : cfg.langCode;
 }
 
 // ===========================================================================
@@ -1409,6 +1437,12 @@ void print_help(const char* progName) {
     opt("--embed-model <n>",      "Modello embedding (attiva calcolo vettori)", "");
     opt("--embed-url <url>",      "Override base URL per embedding",         "");
     opt("--embed-key <key>",      "API key per endpoint embedding",          "");
+    std::cout << "\nTTS (voice for web UI narration)\n";
+    opt("--tts-provider <n>",   "xtts|piper",                              cfg.ttsProvider);
+    opt("",                       "  xtts   = tts_locale (port 8004, voice cloning, GPU-friendly)", "");
+    opt("",                       "  piper  = piper_locale (port 8007, fixed voices, light CPU, ONNX)", "");
+    opt("--tts-url <url>",      "Override XTTS server URL",                "(localhost:8004)");
+    opt("--piper-url <url>",    "Override Piper server URL",               "(localhost:8007)");
     std::cout << "\nOLLAMA\n";
     opt("--model <n>",            "Model name",  cfg.ollama_model);
     opt("--url <url>",            "Server URL",  cfg.ollama_baseUrl);
@@ -1488,6 +1522,8 @@ bool parse_args(int argc, char* argv[]) {
         else if (arg == "--img-i2i-provider") { cfg.imgI2iProvider = next(); }
         else if (arg == "--img-i2i-url")   { cfg.imgI2iUrl    = next(); }
         else if (arg == "--tts-url")       { cfg.ttsUrl       = next(); }
+        else if (arg == "--tts-provider")  { cfg.ttsProvider  = next(); }
+        else if (arg == "--piper-url")     { cfg.piperUrl     = next(); }
         else if (arg == "--img-i2i-key")   { cfg.imgI2iKey    = next(); }
         else if (arg == "--img-lora")       { cfg.imgLora       = next(); }
         else if (arg == "--img-lora-scale") { cfg.imgLoraScale   = next_float(cfg.imgLoraScale); }
@@ -4601,12 +4637,13 @@ sol::table result = f_result;
                 crow::response res(400, "Missing text parameter");
                 return res;
             }
-            // POST to TTS server /synthesize with form data
-            std::string base_url = cfg.ttsUrl.empty() ? "http://localhost:8004" : cfg.ttsUrl;
+            // POST to the active TTS server's /synthesize with form data
+            std::string base_url = tts_base_url();
             std::string tts_url  = base_url + "/synthesize";
             // URL-encode text so UTF-8 chars (è, à, ì…) survive form-urlencoded transfer
             char* esc = curl_easy_escape(nullptr, text.c_str(), (int)text.size());
-            std::string form_data = "text=" + std::string(esc) + "&voice_id=" + voice + "&language=it";
+            std::string form_data = "text=" + std::string(esc) + "&voice_id=" + voice
+                                  + "&language=" + tts_language();
             curl_free(esc);
 
             std::vector<uint8_t> audio_bytes;
@@ -4645,8 +4682,7 @@ sol::table result = f_result;
         CROW_ROUTE(app, "/api/tts/voices")([&](const crow::request& req) {
             // ?url= overrides saved cfg so user can refresh before hitting Save
             std::string override_url = req.url_params.get("url") ? req.url_params.get("url") : "";
-            std::string base_url = !override_url.empty() ? override_url
-                                 : (!cfg.ttsUrl.empty()  ? cfg.ttsUrl : "http://localhost:8004");
+            std::string base_url = !override_url.empty() ? override_url : tts_base_url();
             std::string url = base_url + "/voices";
             std::string body;
             CURL* curl = curl_easy_init();
@@ -5865,6 +5901,7 @@ sol::table result = f_result;
                                          : cfg.imgI2iUrl + "/health");
             r["t2i_locale"]  = http_ping("http://localhost:8003/");
             r["tts_locale"]  = http_ping((cfg.ttsUrl.empty() ? "http://localhost:8004" : cfg.ttsUrl) + "/health");
+            r["piper_locale"] = http_ping((cfg.piperUrl.empty() ? "http://localhost:8007" : cfg.piperUrl) + "/health");
             r["rembg_locale"] = http_ping("http://localhost:8005/");
             r["success"] = true;
             crow::response res(r.dump());
@@ -5887,6 +5924,10 @@ sol::table result = f_result;
                 if (srvEnvType.empty() && server == "tts_locale") {
                     srvEnvType = cfg.ttsLocaleEnvType;
                     srvEnvPath = cfg.ttsLocaleEnvPath;
+                }
+                if (srvEnvType.empty() && server == "piper_locale") {
+                    srvEnvType = cfg.piperLocaleEnvType;
+                    srvEnvPath = cfg.piperLocaleEnvPath;
                 }
                 std::string reqEnvType = srvEnvType.empty() ? body.value("py_env_type", cfg.pyEnvType) : srvEnvType;
                 std::string reqEnvPath = srvEnvType.empty() ? body.value("py_env_path", cfg.pyEnvPath) : srvEnvPath;
@@ -5927,6 +5968,13 @@ sol::table result = f_result;
                     // and BeamSearchScorer import — Coqui TTS is unmaintained and incompatible with
                     // modern PyTorch/transformers without these patches.
                     pip_deps    = "transformers==4.36.2 TTS torchaudio soundfile numpy fastapi uvicorn python-multipart";
+                } else if (server == "piper_locale") {
+                    script_path = srv_base + "piper_locale/server.py";
+                    log_file    = "/tmp/rpgai_piper.log";
+                    // piper-tts is ONNX-only (no torch): deps stay light (~150 MB).
+                    // Voice models download lazily on first use from
+                    // rhasspy/piper-voices into piper_locale/models/.
+                    pip_deps    = "piper-tts soundfile numpy fastapi uvicorn python-multipart requests";
                 } else {
                     result["success"] = false;
                     result["error"]   = "Unknown server: " + server;
@@ -5964,8 +6012,9 @@ sol::table result = f_result;
 
                 if (action == "start") {
                     namespace fs = std::filesystem;
-                    std::string cfg_args = (server == "qwen_locale") ? cfg.qwenLocaleArgs
-                                         : (server == "tts_locale")  ? cfg.ttsLocaleArgs
+                    std::string cfg_args = (server == "qwen_locale")   ? cfg.qwenLocaleArgs
+                                         : (server == "tts_locale")   ? cfg.ttsLocaleArgs
+                                         : (server == "piper_locale") ? cfg.piperLocaleArgs
                                          : std::string{};
                     std::string extra_args = body.value("extra_args", cfg_args);
                     // Strip shell metacharacters — args field is trusted (local admin UI)
