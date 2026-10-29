@@ -100,7 +100,8 @@ def _load_language(language: str):
     model = torch.hub.load("snakers4/silero-models",
                            model="silero_tts",
                            language=language,
-                           speaker=model_id)
+                           speaker=model_id,
+                           trust_repo=True)
     model.to(DEVICE)
     sample_rate = _pick_sample_rate(model)
     _models[language] = (model, speakers, sample_rate)
