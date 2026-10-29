@@ -127,6 +127,16 @@ def _load_language(language: str):
     print(f"[startup] '{model_id}' ready (rate={sample_rate}).")
     return _models[language]
 
+def _apply_tts(model, text: str, rate: int, voice: str):
+    """apply_tts signature differs across silero generations: packaged
+    v3/v4 models are self-contained, older ones take model=model."""
+    try:
+        return model.apply_tts(text=text, sample_rate=rate, voice=voice)
+    except TypeError as e:
+        if "model" in str(e):
+            return model.apply_tts(text=text, model=model, sample_rate=rate, voice=voice)
+        raise
+
 def _pick_sample_rate(model, hub_rate, probe_voice) -> int:
     """Silero models accept 8000/24000/48000; keep the requested rate if it
     works. The probe uses a deterministic speaker — 'random' does not exist
@@ -135,8 +145,7 @@ def _pick_sample_rate(model, hub_rate, probe_voice) -> int:
     for rate in candidates:
         try:
             with torch.no_grad():
-                probe = model.apply_tts(text="test", model=model, sample_rate=rate,
-                                        voice=probe_voice)
+                probe = _apply_tts(model, "test", rate, probe_voice)
             if probe is not None and len(probe) > 0:
                 return rate
         except Exception:
@@ -175,8 +184,7 @@ async def synthesize(
     voice = voice_id if voice_id else speakers[0]
     try:
         with torch.no_grad():
-            wav = model.apply_tts(text=text, model=model, sample_rate=sample_rate,
-                                  voice=voice)
+            wav = _apply_tts(model, text, sample_rate, voice)
     except Exception as e:
         raise HTTPException(500, f"Synthesis failed: {e}")
     if wav is None or len(wav) == 0:
