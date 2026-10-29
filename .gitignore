@@ -1,6 +1,10 @@
 # Build artifacts
 build/
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # macOS metadata
 .DS_Store
 **/.DS_Store
