@@ -1334,8 +1334,11 @@ static std::vector<uint8_t> image_from_chat_response(const std::string& resp) {
                                  + resp.substr(0, 200));
 
     const json& msg = j["choices"][0]["message"];
-    if (msg.contains("images") && !msg["images"].empty())
-        return image_from_item(msg["images"][0]);
+    if (msg.contains("images") && !msg["images"].empty()) {
+        // Gateways may prepend intermediate renders (e.g. Gemini thinking
+        // images); the final render is the LAST element.
+        return image_from_item(msg["images"][msg["images"].size() - 1]);
+    }
     if (msg.contains("content") && msg["content"].is_array()) {
         for (const auto& part : msg["content"]) {
             try { return image_from_item(part); } catch (const std::exception&) {}
@@ -1390,12 +1393,39 @@ inline std::vector<uint8_t> img2img(const std::vector<uint8_t>& collage_bytes,
 // remembers the working mode:
 //   t2i: POST /v1/images/generations → minimal POST /v1/images →
 //        POST /v1/chat/completions (text-only user message + modalities)
-//   i2i: multipart POST /v1/images/edits → POST /v1/chat/completions with the
-//        source image inline (edited image back in
+//   i2i: multipart POST /v1/images/edits → POST /v1/images with the source
+//        image as a data URL in input_references → POST /v1/chat/completions
+//        with the source image inline (edited image back in
 //        choices[].message.images[].image_url.url)
+//
+// Gateways classify image models into two families: image_generation-class
+// models (gpt-image-*, seedream, recraft — served by /v1/images, editing via
+// input_references) and chat-class image models (gemini-*-image — served
+// only via chat completions). The chain adapts automatically.
 // ---------------------------------------------------------------------------
 
 namespace custom_img {
+
+// zveno-style editing through the unified Images API: JSON body, source
+// image as a data URL in input_references (documented at
+// zveno.ai/docs/guides/image-generation). Unlike multipart /v1/images/edits
+// this works for image_generation-class models (gpt-image-*, seedream, ...),
+// which gateways usually do not serve via chat completions either.
+// model must not be empty here: /v1/images requires it.
+static std::string post_images_edit(const std::string& prompt,
+                                    const std::vector<uint8_t>& src,
+                                    const std::string& model) {
+    std::string m = model.empty() ? img_cfg.t2i_model : model;
+    if (m.empty())
+        throw std::runtime_error("[IMG] custom: no model configured");
+    json req;
+    req["prompt"] = prompt;
+    req["model"]  = m;
+    req["input_references"] = json::array({
+        "data:image/png;base64," + bytes_to_base64(src)});
+    return img_detail::http_post_json(
+        img_cfg.url + "/v1/images", req.dump(), openai_img::auth_header());
+}
 
 inline std::vector<uint8_t> txt2img(const std::string& prompt) {
     json req;
@@ -1457,26 +1487,44 @@ inline std::vector<uint8_t> img2img(const std::vector<uint8_t>& collage_bytes,
                          + std::to_string(img_cfg.height);
     std::string model = img_cfg.i2i_model.empty() ? "" : img_cfg.i2i_model;
 
-    // 0 = unknown, 1 = multipart /v1/images/edits, 2 = chat completions
+    // 0 = unknown, 1 = multipart /v1/images/edits,
+    // 2 = /v1/images with input_references, 3 = chat completions
     static int path_mode = 0;
 
-    if (path_mode != 2) {
+    if (path_mode == 3)
+        return openai_img::image_from_chat_response(
+            openai_img::post_chat_image(prompt, &collage_bytes));
+
+    std::string resp;
+    if (path_mode == 1) {
+        resp = img_detail::http_post_multipart(
+            img_cfg.url + "/v1/images/edits",
+            openai_img::auth_header(), prompt, collage_bytes, model, 1, size_str);
+    } else if (path_mode == 2) {
+        resp = post_images_edit(prompt, collage_bytes, model);
+    } else {
         try {
-            std::string resp = img_detail::http_post_multipart(
+            resp = img_detail::http_post_multipart(
                 img_cfg.url + "/v1/images/edits",
                 openai_img::auth_header(), prompt, collage_bytes, model, 1, size_str);
             path_mode = 1;
-            auto j = json::parse(resp);
-            if (!j.contains("data") || j["data"].empty())
-                throw std::runtime_error("[IMG] custom img2img: no data in response: " + resp);
-            return openai_img::image_from_item(j["data"][0]);
         } catch (const std::exception&) {
-            path_mode = 2;
+            try {
+                resp = post_images_edit(prompt, collage_bytes, model);
+                path_mode = 2;
+            } catch (const std::exception&) {
+                path_mode = 3;
+                return openai_img::image_from_chat_response(
+                    openai_img::post_chat_image(prompt, &collage_bytes));
+            }
         }
     }
 
-    return openai_img::image_from_chat_response(
-        openai_img::post_chat_image(prompt, &collage_bytes));
+    auto j = json::parse(resp);
+    if (!j.contains("data") || j["data"].empty())
+        throw std::runtime_error("[IMG] custom img2img: no data in response: " + resp);
+
+    return openai_img::image_from_item(j["data"][0]);
 }
 
 } // namespace custom_img
