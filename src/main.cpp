@@ -5975,7 +5975,7 @@ sol::table result = f_result;
                     log_file    = "/tmp/rpgai_silero.log";
                     // Models load lazily per language via torch.hub (snakers4/silero-models)
                     // on first request; first use of a language downloads its weights.
-                    pip_deps    = "torch soundfile numpy fastapi uvicorn python-multipart requests tqdm";
+                    pip_deps    = "torch soundfile numpy fastapi uvicorn python-multipart requests tqdm omegaconf";
                 } else {
                     result["success"] = false;
                     result["error"]   = "Unknown server: " + server;
