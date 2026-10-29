@@ -211,12 +211,21 @@ Different providers can be used for each.
 
 ## Local server URLs
 
-Optional local Python servers, manageable from the web UI (start/stop, install deps). Each has its own repo folder (`tts_locale/`, `faceswap_locale/`) with its own `server.py`.
+Optional local Python servers, manageable from the web UI (start/stop, install deps). Each has its own repo folder (`tts_locale/`, `silero_locale/`, `faceswap_locale/`) with its own `server.py`.
 
 ```bash
---tts-url <url>          # XTTS v2 TTS server (voice synthesis, /api/tts)
+--tts-provider <n>       # xtts | silero (default: xtts)
+--tts-url <url>          # XTTS v2 TTS server, port 8004 (voice cloning, GPU-friendly)
+--silero-url <url>       # Silero TTS server, port 8006 (fixed speakers, CPU-friendly)
 --faceswap-url <url>     # faceswap_locale server
 ```
+
+The two TTS servers speak the same HTTP contract (`/synthesize`, `/voices`, `/health`), so the engine proxy (`/api/tts`) and the web UI work unchanged with either. `--tts-provider` selects which one `/api/tts` forwards to; the choice is also available in the web Settings (TTS card).
+
+- **xtts** — Coqui XTTS v2, zero-shot voice cloning from a 6–30 s reference WAV (`POST /voices/add`). Highest quality, slow on CPU.
+- **silero** — Silero TTS, fixed model speakers (e.g. `aidar`, `baya`, `kseniya`, `xenia`, `eugene` for Russian), near-instant on a modern CPU, no GPU needed. No voice cloning (`POST /voices/add` returns 501). Models are CC BY-NC (non-commercial). Languages: ru, en, de, es, fr, ua, uz — an unsupported request language falls back to the server's `--language` (default `en`).
+
+The language sent to the TTS server follows `--lang` (previously hardcoded to `it`; when `--lang` is unset the default remains `it`).
 
 ---
 
