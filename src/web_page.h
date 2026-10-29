@@ -830,14 +830,24 @@ std::string main_page = R"HTML(<!DOCTYPE html>
           </div>
           <div class="server-card">
             <div style="display:flex;align-items:center;justify-content:space-between">
-              <h4>TTS Locale Server <small style="font-size:10px;color:var(--dim)">port 8004</small></h4>
+              <h4>TTS Server</h4>
               <span class="server-status">
                 <span id="dot-tts-locale" class="server-dot"></span>
-                <span id="label-tts-locale">—</span>
+                <span style="color:var(--dim)">XTTS:</span> <span id="label-tts-locale">—</span>
+                <span id="dot-piper-locale" class="server-dot" style="margin-left:10px"></span>
+                <span style="color:var(--dim)">Piper:</span> <span id="label-piper-locale">—</span>
               </span>
             </div>
             <div class="sfield">
-              <label>Server URL <small style="color:var(--muted)">(leave empty for localhost)</small></label>
+              <label>Provider</label>
+              <select id="s-tts-provider" onchange="onTtsProviderChange()">
+                <option value="xtts">xtts — tts_locale (port 8004, voice cloning)</option>
+                <option value="piper">piper — piper_locale (port 8007, CPU, light)</option>
+              </select>
+            </div>
+            <div id="tts-xtts-fields">
+            <div class="sfield">
+              <label>XTTS server URL <small style="color:var(--muted)">(leave empty for localhost)</small></label>
               <input id="s-tts-url" type="text" placeholder="http://SERVER_IP:8004">
             </div>
             <div class="sfield">
@@ -855,6 +865,45 @@ std::string main_page = R"HTML(<!DOCTYPE html>
               <input id="s-tts-locale-env-path" type="text" placeholder="rpgai_tts">
             </div>
             <div class="sfield">
+              <label>Launch args</label>
+              <input id="s-tts-locale-args" type="text" placeholder="--host 0.0.0.0">
+            </div>
+            <div class="server-actions">
+              <button class="btn btn-secondary" onclick="serverAction('tts_locale','install')">⬇ Install deps</button>
+              <button class="btn btn-primary"   onclick="serverAction('tts_locale','start')">▶ Start</button>
+              <button class="btn btn-ghost"     onclick="serverAction('tts_locale','stop')">■ Stop</button>
+            </div>
+            </div>
+            <div id="tts-piper-fields" style="display:none">
+            <div class="sfield">
+              <label>Piper server URL <small style="color:var(--muted)">(leave empty for localhost)</small></label>
+              <input id="s-piper-url" type="text" placeholder="http://SERVER_IP:8007">
+            </div>
+            <div class="sfield">
+              <label>Python env <small style="color:var(--muted)">(overrides global)</small></label>
+              <select id="s-piper-locale-env-type" onchange="onPiperEnvChange()">
+                <option value="">(use global)</option>
+                <option value="system">system</option>
+                <option value="venv">venv</option>
+                <option value="conda">conda</option>
+                <option value="uv">uv</option>
+              </select>
+            </div>
+            <div class="sfield" id="piper-locale-env-path-row" style="display:none">
+              <label id="piper-locale-env-path-label">Path / Env name</label>
+              <input id="s-piper-locale-env-path" type="text" placeholder="rpgai_piper">
+            </div>
+            <div class="sfield">
+              <label>Launch args</label>
+              <input id="s-piper-locale-args" type="text" placeholder="--language it">
+            </div>
+            <div class="server-actions">
+              <button class="btn btn-secondary" onclick="serverAction('piper_locale','install')">⬇ Install deps</button>
+              <button class="btn btn-primary"   onclick="serverAction('piper_locale','start')">▶ Start</button>
+              <button class="btn btn-ghost"     onclick="serverAction('piper_locale','stop')">■ Stop</button>
+            </div>
+            </div>
+            <div class="sfield">
               <label>Narrator voice</label>
               <select id="s-tts-narrator-voice" style="width:100%">
                 <option value="">(none — click Refresh)</option>
@@ -867,15 +916,6 @@ std::string main_page = R"HTML(<!DOCTYPE html>
             <div class="sfield">
               <label>Test sentence</label>
               <input id="s-tts-test-text" type="text" value="Ciao. Sono il narratore di questa avventura." style="width:100%">
-            </div>
-            <div class="sfield">
-              <label>Launch args</label>
-              <input id="s-tts-locale-args" type="text" placeholder="--host 0.0.0.0">
-            </div>
-            <div class="server-actions">
-              <button class="btn btn-secondary" onclick="serverAction('tts_locale','install')">⬇ Install deps</button>
-              <button class="btn btn-primary"   onclick="serverAction('tts_locale','start')">▶ Start</button>
-              <button class="btn btn-ghost"     onclick="serverAction('tts_locale','stop')">■ Stop</button>
             </div>
           </div>
           <div class="server-card">
@@ -974,6 +1014,7 @@ let histIdx      = -1;
 /* ================================================================
    Utilities
    ================================================================ */
+function gv(id) { const el = document.getElementById(id); return el ? el.value : ''; }
 function addMsg(cls, text) {
   const d = document.createElement('div');
   d.className = 'msg ' + cls;
@@ -2345,7 +2386,13 @@ async function loadSettings() {
     sv('s-py-env-type',  d.py_env_type || 'system');
     sv('s-py-env-path',  d.py_env_path || '');
     sv('s-qwen-args',           d.qwen_locale_args  || '');
+    sv('s-tts-provider',        d.tts_provider      || 'xtts');
     sv('s-tts-url',             d.tts_url           || '');
+    sv('s-piper-url',           d.piper_url         || '');
+    sv('s-piper-locale-args',     d.piper_locale_args     || '');
+    sv('s-piper-locale-env-type', d.piper_locale_env_type || '');
+    sv('s-piper-locale-env-path', d.piper_locale_env_path || '');
+    onTtsProviderChange(); // show the selected provider's fields before fetching voices
     ttsNarratorVoice = d.tts_narrator_voice || '';
     // narrator voice: silently populate dropdown (no alert at startup)
     refreshTtsVoices(false).then(() => {
@@ -2356,6 +2403,7 @@ async function loadSettings() {
     sv('s-tts-locale-env-type', d.tts_locale_env_type || '');
     sv('s-tts-locale-env-path', d.tts_locale_env_path || '');
     onTtsEnvChange();
+    onPiperEnvChange();
     onPyEnvChange();
 
     // Pre-select t2i model from saved setting (models fetched when server is up)
@@ -2394,7 +2442,6 @@ function onPyEnvChange() {
 }
 
 async function saveSettings() {
-  const gv = id => { const el = document.getElementById(id); return el ? el.value : ''; };
   const imgProv = gv('s-img-provider');
   const payload = {
     provider:         gv('s-provider'),
@@ -2439,11 +2486,16 @@ async function saveSettings() {
     py_env_type:      gv('s-py-env-type'),
     py_env_path:      gv('s-py-env-path'),
     qwen_locale_args:      gv('s-qwen-args'),
+    tts_provider:          gv('s-tts-provider'),
     tts_url:               gv('s-tts-url'),
     tts_narrator_voice:    gv('s-tts-narrator-voice'),
     tts_locale_args:       gv('s-tts-locale-args'),
     tts_locale_env_type:   gv('s-tts-locale-env-type'),
     tts_locale_env_path:   gv('s-tts-locale-env-path'),
+    piper_url:             gv('s-piper-url'),
+    piper_locale_args:       gv('s-piper-locale-args'),
+    piper_locale_env_type:   gv('s-piper-locale-env-type'),
+    piper_locale_env_path:   gv('s-piper-locale-env-path'),
     base_path:        gv('s-base-path'),
     max_history:      parseInt(gv('s-max-history'))  || 30,
     max_retries:      parseInt(gv('s-max-retries'))  || 3,
@@ -2487,6 +2539,7 @@ async function refreshServerStatus() {
     set('dot-faceswap',    'label-faceswap',     d.faceswap_locale);
     set('dot-qwen',        'label-qwen',         d.qwen_locale);
     set('dot-tts-locale',  'label-tts-locale',   d.tts_locale);
+    set('dot-piper-locale', 'label-piper-locale', d.piper_locale);
     set('dot-t2i',         'label-t2i',          d.t2i_locale);
     if (d.t2i_locale) fetchT2iModels();
     document.getElementById('t2i-model-row').style.display = d.t2i_locale ? '' : 'none';
@@ -2571,7 +2624,10 @@ async function playTTS(text, btn) {
 async function refreshTtsVoices(showAlert) {
   const sel = document.getElementById('s-tts-narrator-voice');
   const current = sel.value;
-  const urlOverride = (document.getElementById('s-tts-url') || {}).value || '';
+  // The URL field of the ACTIVE provider acts as pre-save override
+  const prov = (document.getElementById('s-tts-provider') || {}).value || 'xtts';
+  const urlId = prov === 'piper' ? 's-piper-url' : 's-tts-url';
+  const urlOverride = (document.getElementById(urlId) || {}).value || '';
   const params = urlOverride ? '?url=' + encodeURIComponent(urlOverride) : '';
   try {
     const r = await fetch('/api/tts/voices' + params);
@@ -2611,12 +2667,31 @@ async function testNarratorVoice() {
   } catch(e) { alert('TTS error: ' + e.message); }
 }
 
-function onTtsEnvChange() {
-  const t = document.getElementById('s-tts-locale-env-type').value;
-  const row = document.getElementById('tts-locale-env-path-row');
-  const lbl = document.getElementById('tts-locale-env-path-label');
+// Show the field block of the selected TTS provider (and refresh the voice
+// list against that provider's server, silently).
+function onTtsProviderChange() {
+  const prov = (document.getElementById('s-tts-provider') || {}).value || 'xtts';
+  const x = document.getElementById('tts-xtts-fields');
+  const p = document.getElementById('tts-piper-fields');
+  if (x) x.style.display = prov === 'piper' ? 'none' : '';
+  if (p) p.style.display = prov === 'piper' ? '' : 'none';
+  if (typeof refreshTtsVoices === 'function') refreshTtsVoices(false);
+}
+
+function toggleEnvRow(typeId, rowId, labelId) {
+  const t = document.getElementById(typeId).value;
+  const row = document.getElementById(rowId);
+  const lbl = document.getElementById(labelId);
   row.style.display = t && t !== 'system' ? '' : 'none';
   if (lbl) lbl.textContent = t === 'conda' ? 'Env name' : 'Path';
+}
+
+function onTtsEnvChange() {
+  toggleEnvRow('s-tts-locale-env-type', 'tts-locale-env-path-row', 'tts-locale-env-path-label');
+}
+
+function onPiperEnvChange() {
+  toggleEnvRow('s-piper-locale-env-type', 'piper-locale-env-path-row', 'piper-locale-env-path-label');
 }
 
 // ==========================================================================
