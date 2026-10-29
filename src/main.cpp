@@ -4690,9 +4690,12 @@ sol::table result = f_result;
         // -----------------------------------------------------------------
         CROW_ROUTE(app, "/api/tts/voices")([&](const crow::request& req) {
             // ?url= overrides saved cfg so user can refresh before hitting Save;
-            // ?provider= previews a Settings selection; ?language= filters voices
+            // ?provider= previews a Settings selection; ?language= filters voices.
+            // Without an explicit language the catalog follows the game language
+            // (--lang), so the narrator dropdown lists the right locale.
             std::string override_url = req.url_params.get("url") ? req.url_params.get("url") : "";
             std::string lang = req.url_params.get("language") ? req.url_params.get("language") : "";
+            if (lang.empty()) lang = tts_language();
             std::string base_url = !override_url.empty() ? override_url
                                  : tts_base_url(tts_provider_override(req));
             std::string url = base_url + "/voices" + (lang.empty() ? "" : "?language=" + lang);
