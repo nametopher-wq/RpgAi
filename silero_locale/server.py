@@ -1,0 +1,199 @@
+"""
+RpgAi Silero TTS Locale Server
+------------------------------
+Lightweight CPU-friendly alternative to the XTTS (tts_locale) server: fixed,
+model-predefined speakers instead of voice cloning. Quality is lower than
+XTTS but synthesis is near-instant on a modern CPU — usable without a GPU.
+
+License note: Silero TTS models are CC BY-NC (non-commercial use only).
+Suitable for personal, non-commercial game sessions.
+
+Model: Silero TTS via torch.hub (snakers4/silero-models), loaded lazily per
+language on first request and cached in memory. First request for a language
+also downloads the model weights (~100-300 MB) into the torch hub cache.
+
+Recommended launch:
+  python server.py --host 0.0.0.0
+
+Endpoints (same contract as tts_locale/server.py, so the engine and web UI
+work unchanged):
+  POST /synthesize
+    text     — text to synthesize
+    voice_id — speaker name (see GET /voices for the active language)
+    language — BCP-47-ish language code (default: server --language)
+    Returns: WAV audio bytes (Content-Type: audio/wav)
+
+  GET /voices[?language=xx]  — list speakers for a language
+  GET /health                — liveness check
+  POST /voices/add           — NOT supported (no cloning); returns 501
+"""
+
+import argparse
+import io
+
+import numpy as np
+import soundfile as sf
+import torch
+from fastapi import FastAPI, Form, HTTPException
+from fastapi.responses import Response
+
+# ============================================================
+# ─── CLI ────────────────────────────────────────────────────
+# ============================================================
+def parse_args():
+    parser = argparse.ArgumentParser(description="RpgAi Silero TTS Locale Server")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="Host (default: 127.0.0.1, use 0.0.0.0 for network access)")
+    parser.add_argument("--port", type=int, default=8006,
+                        help="Port (default: 8006)")
+    parser.add_argument("--device", default="cpu",
+                        help="Device: cpu, cuda, ... (default: cpu — the point of this server)")
+    parser.add_argument("--language", default="en",
+                        help="Default/fallback language (default: en). Supported: ru en de es fr ua uz")
+    parser.add_argument("--sample-rate", type=int, default=48000,
+                        help="Output sample rate (default: 48000; falls back to 24000/8000 if the model rejects it)")
+    return parser.parse_args()
+
+ARGS = parse_args()
+
+# Language → (silero model id, speaker list served by GET /voices).
+# 'random' speakers exist in the models but are excluded: an NPC voice must be
+# stable across turns, so we only list deterministic speakers.
+LANGUAGE_MODELS = {
+    "ru": ("v4_ru", ["aidar", "baya", "kseniya", "xenia", "eugene"]),
+    "en": ("v3_en", [f"en_{i}" for i in range(118)]),
+    "de": ("v3_de", ["bernd_ungerer", "eva_k", "friedrich", "hokuspokus", "karlsson"]),
+    "es": ("v3_es", ["es_0", "es_1", "es_2"]),
+    "fr": ("v3_fr", [f"fr_{i}" for i in range(6)]),
+    "ua": ("v4_ua", ["mykyta"]),
+    "uz": ("v3_uz", ["dilnavoz"]),
+}
+
+DEVICE = torch.device(ARGS.device)
+
+print("╔══════════════════════════════════════════════╗")
+print("║   RpgAi Silero TTS Locale Server             ║")
+print("╠══════════════════════════════════════════════╣")
+print(f"║  Device:    {str(DEVICE):<32}║")
+print(f"║  Host:      {ARGS.host:<32}║")
+print(f"║  Port:      {ARGS.port:<32}║")
+print(f"║  Language:  {ARGS.language:<32}║")
+print(f"║  Rate:      {ARGS.sample_rate:<32}║")
+print("╚══════════════════════════════════════════════╝")
+
+# ============================================================
+# ─── MODEL CACHE ────────────────────────────────────────────
+# ============================================================
+# language → (model, speakers, sample_rate)
+_models: dict = {}
+
+def _load_language(language: str):
+    """Load and cache the Silero model for a language (torch hub, lazy)."""
+    if language in _models:
+        return _models[language]
+    if language not in LANGUAGE_MODELS:
+        supported = ", ".join(sorted(LANGUAGE_MODELS))
+        raise HTTPException(400, f"Unsupported language '{language}'. Supported: {supported}")
+    model_id, speakers = LANGUAGE_MODELS[language]
+    print(f"[startup] Loading silero '{model_id}' on {DEVICE} ...")
+    model = torch.hub.load("snakers4/silero-models",
+                           model="silero_tts",
+                           language=language,
+                           speaker=model_id)
+    model.to(DEVICE)
+    sample_rate = _pick_sample_rate(model)
+    _models[language] = (model, speakers, sample_rate)
+    print(f"[startup] '{model_id}' ready (rate={sample_rate}).")
+    return _models[language]
+
+def _pick_sample_rate(model) -> int:
+    """Silero models accept 8000/24000/48000; keep the requested rate if valid."""
+    for rate in (ARGS.sample_rate, 24000, 8000):
+        try:
+            with torch.no_grad():
+                probe = model.apply_tts(text="test", model=model, sample_rate=rate,
+                                        voice="random")
+            if probe is not None and len(probe) > 0:
+                return rate
+        except Exception:
+            continue
+    raise RuntimeError("Could not determine a working sample rate for the model")
+
+def _resolve_language(requested: str) -> str:
+    """Map a request language to a loaded model language, falling back to the
+    server default. Logs the substitution so a misconfigured game language
+    (e.g. 'it', which Silero does not cover) is visible instead of silent."""
+    lang = (requested or ARGS.language).lower() or ARGS.language
+    if lang in LANGUAGE_MODELS:
+        return lang
+    if lang not in _language_warnings:
+        print(f"[warn] language '{lang}' not supported by Silero — falling back to '{ARGS.language}'")
+        _language_warnings.add(lang)
+    return ARGS.language
+
+_language_warnings: set = set()
+
+app = FastAPI(title="RpgAi Silero TTS Locale Server")
+
+# ============================================================
+# ─── POST /synthesize ──────────────────────────────────────
+# ============================================================
+@app.post("/synthesize")
+async def synthesize(
+    text:     str = Form(...),
+    voice_id: str = Form(...),
+    language: str = Form(ARGS.language),
+):
+    if not text.strip():
+        raise HTTPException(400, "Empty text")
+    lang = _resolve_language(language)
+    model, speakers, sample_rate = _load_language(lang)
+    voice = voice_id if voice_id else speakers[0]
+    try:
+        with torch.no_grad():
+            wav = model.apply_tts(text=text, model=model, sample_rate=sample_rate,
+                                  voice=voice)
+    except Exception as e:
+        raise HTTPException(500, f"Synthesis failed: {e}")
+    if wav is None or len(wav) == 0:
+        raise HTTPException(500, "Synthesis produced empty audio")
+    buf = io.BytesIO()
+    sf.write(buf, np.array(wav, dtype=np.float32),
+             samplerate=sample_rate, format="WAV", subtype="PCM_16")
+    buf.seek(0)
+    return Response(content=buf.read(), media_type="audio/wav")
+
+# ============================================================
+# ─── GET /voices ───────────────────────────────────────────
+# ============================================================
+@app.get("/voices")
+def list_voices(language: str = ARGS.language):
+    lang = _resolve_language(language)
+    _, speakers, _ = _load_language(lang)
+    return {"voices": speakers, "language": lang}
+
+# ============================================================
+# ─── GET /health ───────────────────────────────────────────
+# ============================================================
+@app.get("/health")
+def health():
+    return {"status": "ok", "engine": "silero",
+            "device": str(DEVICE), "language": ARGS.language,
+            "loaded_languages": sorted(_models.keys()),
+            "voices": len(LANGUAGE_MODELS.get(ARGS.language, ("", []))[1])}
+
+# ============================================================
+# ─── POST /voices/add ──────────────────────────────────────
+# ============================================================
+@app.post("/voices/add")
+def add_voice():
+    raise HTTPException(501, "Silero TTS has fixed model speakers — voice "
+                             "cloning/upload is not supported. Use one of the "
+                             "speakers from GET /voices.")
+
+# ============================================================
+# ─── MAIN ──────────────────────────────────────────────────
+# ============================================================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host=ARGS.host, port=ARGS.port)
