@@ -122,7 +122,7 @@ def _load_language(language: str):
     else:
         model = res
     model.to(DEVICE)
-    sample_rate = _pick_sample_rate(model, hub_rate, speakers[0])
+    sample_rate = _pick_sample_rate(model, hub_rate, speakers[0], language)
     _models[language] = (model, speakers, sample_rate)
     print(f"[startup] '{model_id}' ready (rate={sample_rate}).")
     return _models[language]
@@ -142,19 +142,26 @@ def _apply_tts(model, text: str, rate: int, voice: str):
             raise
     return model.apply_tts(text=text, model=model, sample_rate=rate, voice=voice)
 
-def _pick_sample_rate(model, hub_rate, probe_voice) -> int:
+# Word used to probe a working sample rate. Must be valid text in the target
+# language: the ru/ua accentuators raise a bare ValueError on Latin-only
+# input, which made the probe fail for every rate.
+PROBE_TEXT = {"ru": "проверка", "ua": "перевірка"}
+
+def _pick_sample_rate(model, hub_rate, probe_voice, language: str) -> int:
     """Silero models accept 8000/24000/48000; keep the requested rate if it
     works. The probe uses a deterministic speaker — 'random' does not exist
     in every model version (e.g. v4_ru) and would fail the probe."""
     candidates = [r for r in (ARGS.sample_rate, hub_rate, 24000, 8000) if r]
+    probe_text = PROBE_TEXT.get(language, "test")
     for rate in candidates:
         try:
             with torch.no_grad():
-                probe = _apply_tts(model, "test", rate, probe_voice)
+                probe = _apply_tts(model, probe_text, rate, probe_voice)
             if probe is not None and len(probe) > 0:
                 return rate
-        except Exception:
-            continue
+            print(f"[warn] probe at {rate} Hz returned empty audio")
+        except Exception as e:
+            print(f"[warn] probe at {rate} Hz failed: {type(e).__name__}: {e}")
     raise RuntimeError("Could not determine a working sample rate for the model")
 
 def _resolve_language(requested: str) -> str:
