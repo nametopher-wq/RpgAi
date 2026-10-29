@@ -284,16 +284,26 @@ For routers that expose image models outside the canonical Images API
 the dialect on first use and remembers it:
 - t2i: `/v1/images/generations` → minimal `/v1/images` → chat-completions
   (`modalities: ["image"]`, image back in `choices[].message.images[]`)
-- i2i: multipart `/v1/images/edits` → chat-completions with the source image
+- i2i: multipart `/v1/images/edits` → `/v1/images` with the source image as a
+  data URL in `input_references` → chat-completions with the source image
   inline (OpenRouter-style editing)
 
-Use image-capable model IDs from your gateway (for zveno: `google/gemini-*-image`,
-`openai/gpt-5-image-mini`, `openai/gpt-5.4-image-2`; note `openai/gpt-5-image`
-currently returns empty responses there).
+Gateways classify image models into two families: **image_generation-class**
+(`openai/gpt-image-*`, `bytedance-seed/seedream-*`, `recraft/*` — served by
+`/v1/images`, editing via `input_references`) and **chat-class**
+(`google/gemini-*-image` — served only via chat completions). Any mix works:
+the chain falls through to the family your model belongs to. When editing via
+chat, the final render is taken from the *last* element of `message.images`
+(gateways may prepend intermediate thinking images).
+
+For zveno.ai, check a model's accepted parameters in
+`GET /v1/models?model_type=image_generation` (`image_parameters`) — unknown
+parameters are rejected with 400.
+
 ```bash
 --img-provider custom --img-url https://api.zveno.ai --img-key YOUR_KEY \
 --img-t2i-model google/gemini-2.5-flash-image \
---img-i2i-model google/gemini-3-pro-image
+--img-i2i-model openai/gpt-image-2
 ```
 
 ### DashScope (`dashscope`) — Alibaba Cloud
