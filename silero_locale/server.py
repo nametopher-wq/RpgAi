@@ -31,6 +31,15 @@ work unchanged):
 import argparse
 import io
 import os
+import sys
+
+# Windows consoles with a legacy codepage (e.g. CP1251) cannot encode Cyrillic
+# log output; force UTF-8 stdio so prints never crash the request handler.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 # python-build-standalone / bare venv interpreters on Windows do not trust the
 # system CA store, so downloading model weights fails with a certificate
@@ -183,12 +192,20 @@ app = FastAPI(title="RpgAi Silero TTS Locale Server")
 # ============================================================
 # ─── POST /synthesize ──────────────────────────────────────
 # ============================================================
+# Parse the urlencoded body explicitly as UTF-8. FastAPI's Form() goes
+# through python-multipart, which falls back to the process locale (e.g.
+# cp1251 on a Russian Windows) when the client sends no charset — that
+# corrupts any non-ASCII text into mojibake before synthesis.
+from urllib.parse import parse_qsl
+from fastapi import Request
+
 @app.post("/synthesize")
-async def synthesize(
-    text:     str = Form(...),
-    voice_id: str = Form(...),
-    language: str = Form(ARGS.language),
-):
+async def synthesize(request: Request):
+    body  = (await request.body()).decode("utf-8", errors="replace")
+    form  = dict(parse_qsl(body, keep_blank_values=True))
+    text      = form.get("text", "")
+    voice_id  = form.get("voice_id", "")
+    language  = form.get("language", ARGS.language)
     if not text.strip():
         raise HTTPException(400, "Empty text")
     lang = _resolve_language(language)
@@ -198,6 +215,8 @@ async def synthesize(
         with torch.no_grad():
             wav = _apply_tts(model, text, sample_rate, voice)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Synthesis failed: {e}")
     if wav is None or len(wav) == 0:
         raise HTTPException(500, "Synthesis produced empty audio")
