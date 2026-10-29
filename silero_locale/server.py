@@ -71,15 +71,16 @@ LANGUAGE_MODELS = {
 
 DEVICE = torch.device(ARGS.device)
 
-print("╔══════════════════════════════════════════════╗")
-print("║   RpgAi Silero TTS Locale Server             ║")
-print("╠══════════════════════════════════════════════╣")
-print(f"║  Device:    {str(DEVICE):<32}║")
-print(f"║  Host:      {ARGS.host:<32}║")
-print(f"║  Port:      {ARGS.port:<32}║")
-print(f"║  Language:  {ARGS.language:<32}║")
-print(f"║  Rate:      {ARGS.sample_rate:<32}║")
-print("╚══════════════════════════════════════════════╝")
+# Keep the banner plain ASCII: on Windows consoles with a legacy codepage
+# (e.g. CP1251) Python stdio cannot encode box-drawing characters and crashes.
+print("==============================================")
+print("  RpgAi Silero TTS Locale Server")
+print(f"  Device:    {DEVICE}")
+print(f"  Host:      {ARGS.host}")
+print(f"  Port:      {ARGS.port}")
+print(f"  Language:  {ARGS.language}")
+print(f"  Rate:      {ARGS.sample_rate}")
+print("==============================================")
 
 # ============================================================
 # ─── MODEL CACHE ────────────────────────────────────────────
