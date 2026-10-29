@@ -830,14 +830,24 @@ std::string main_page = R"HTML(<!DOCTYPE html>
           </div>
           <div class="server-card">
             <div style="display:flex;align-items:center;justify-content:space-between">
-              <h4>TTS Locale Server <small style="font-size:10px;color:var(--dim)">port 8004</small></h4>
+              <h4>TTS Server</h4>
               <span class="server-status">
                 <span id="dot-tts-locale" class="server-dot"></span>
                 <span id="label-tts-locale">—</span>
+                <span id="dot-silero-locale" class="server-dot" style="margin-left:10px"></span>
+                <span id="label-silero-locale">—</span>
               </span>
             </div>
             <div class="sfield">
-              <label>Server URL <small style="color:var(--muted)">(leave empty for localhost)</small></label>
+              <label>Provider</label>
+              <select id="s-tts-provider" onchange="onTtsProviderChange()">
+                <option value="xtts">xtts — tts_locale (port 8004, voice cloning)</option>
+                <option value="silero">silero — silero_locale (port 8006, CPU, fixed speakers)</option>
+              </select>
+            </div>
+            <div id="tts-xtts-fields">
+            <div class="sfield">
+              <label>XTTS server URL <small style="color:var(--muted)">(leave empty for localhost)</small></label>
               <input id="s-tts-url" type="text" placeholder="http://SERVER_IP:8004">
             </div>
             <div class="sfield">
@@ -855,6 +865,45 @@ std::string main_page = R"HTML(<!DOCTYPE html>
               <input id="s-tts-locale-env-path" type="text" placeholder="rpgai_tts">
             </div>
             <div class="sfield">
+              <label>Launch args</label>
+              <input id="s-tts-locale-args" type="text" placeholder="--host 0.0.0.0">
+            </div>
+            <div class="server-actions">
+              <button class="btn btn-secondary" onclick="serverAction('tts_locale','install')">⬇ Install deps</button>
+              <button class="btn btn-primary"   onclick="serverAction('tts_locale','start')">▶ Start</button>
+              <button class="btn btn-ghost"     onclick="serverAction('tts_locale','stop')">■ Stop</button>
+            </div>
+            </div>
+            <div id="tts-silero-fields" style="display:none">
+            <div class="sfield">
+              <label>Silero server URL <small style="color:var(--muted)">(leave empty for localhost)</small></label>
+              <input id="s-silero-url" type="text" placeholder="http://SERVER_IP:8006">
+            </div>
+            <div class="sfield">
+              <label>Python env <small style="color:var(--muted)">(overrides global)</small></label>
+              <select id="s-silero-locale-env-type" onchange="onSileroEnvChange()">
+                <option value="">(use global)</option>
+                <option value="system">system</option>
+                <option value="venv">venv</option>
+                <option value="conda">conda</option>
+                <option value="uv">uv</option>
+              </select>
+            </div>
+            <div class="sfield" id="silero-locale-env-path-row" style="display:none">
+              <label id="silero-locale-env-path-label">Path / Env name</label>
+              <input id="s-silero-locale-env-path" type="text" placeholder="rpgai_silero">
+            </div>
+            <div class="sfield">
+              <label>Launch args</label>
+              <input id="s-silero-locale-args" type="text" placeholder="--language ru">
+            </div>
+            <div class="server-actions">
+              <button class="btn btn-secondary" onclick="serverAction('silero_locale','install')">⬇ Install deps</button>
+              <button class="btn btn-primary"   onclick="serverAction('silero_locale','start')">▶ Start</button>
+              <button class="btn btn-ghost"     onclick="serverAction('silero_locale','stop')">■ Stop</button>
+            </div>
+            </div>
+            <div class="sfield">
               <label>Narrator voice</label>
               <select id="s-tts-narrator-voice" style="width:100%">
                 <option value="">(none — click Refresh)</option>
@@ -867,15 +916,6 @@ std::string main_page = R"HTML(<!DOCTYPE html>
             <div class="sfield">
               <label>Test sentence</label>
               <input id="s-tts-test-text" type="text" value="Ciao. Sono il narratore di questa avventura." style="width:100%">
-            </div>
-            <div class="sfield">
-              <label>Launch args</label>
-              <input id="s-tts-locale-args" type="text" placeholder="--host 0.0.0.0">
-            </div>
-            <div class="server-actions">
-              <button class="btn btn-secondary" onclick="serverAction('tts_locale','install')">⬇ Install deps</button>
-              <button class="btn btn-primary"   onclick="serverAction('tts_locale','start')">▶ Start</button>
-              <button class="btn btn-ghost"     onclick="serverAction('tts_locale','stop')">■ Stop</button>
             </div>
           </div>
           <div class="server-card">
@@ -2345,7 +2385,13 @@ async function loadSettings() {
     sv('s-py-env-type',  d.py_env_type || 'system');
     sv('s-py-env-path',  d.py_env_path || '');
     sv('s-qwen-args',           d.qwen_locale_args  || '');
+    sv('s-tts-provider',        d.tts_provider      || 'xtts');
     sv('s-tts-url',             d.tts_url           || '');
+    sv('s-silero-url',          d.silero_url        || '');
+    sv('s-silero-locale-args',     d.silero_locale_args     || '');
+    sv('s-silero-locale-env-type', d.silero_locale_env_type || '');
+    sv('s-silero-locale-env-path', d.silero_locale_env_path || '');
+    onTtsProviderChange(); // show the selected provider's fields before fetching voices
     ttsNarratorVoice = d.tts_narrator_voice || '';
     // narrator voice: silently populate dropdown (no alert at startup)
     refreshTtsVoices(false).then(() => {
@@ -2356,6 +2402,7 @@ async function loadSettings() {
     sv('s-tts-locale-env-type', d.tts_locale_env_type || '');
     sv('s-tts-locale-env-path', d.tts_locale_env_path || '');
     onTtsEnvChange();
+    onSileroEnvChange();
     onPyEnvChange();
 
     // Pre-select t2i model from saved setting (models fetched when server is up)
@@ -2439,11 +2486,16 @@ async function saveSettings() {
     py_env_type:      gv('s-py-env-type'),
     py_env_path:      gv('s-py-env-path'),
     qwen_locale_args:      gv('s-qwen-args'),
+    tts_provider:          gv('s-tts-provider'),
     tts_url:               gv('s-tts-url'),
     tts_narrator_voice:    gv('s-tts-narrator-voice'),
     tts_locale_args:       gv('s-tts-locale-args'),
     tts_locale_env_type:   gv('s-tts-locale-env-type'),
     tts_locale_env_path:   gv('s-tts-locale-env-path'),
+    silero_url:            gv('s-silero-url'),
+    silero_locale_args:       gv('s-silero-locale-args'),
+    silero_locale_env_type:   gv('s-silero-locale-env-type'),
+    silero_locale_env_path:   gv('s-silero-locale-env-path'),
     base_path:        gv('s-base-path'),
     max_history:      parseInt(gv('s-max-history'))  || 30,
     max_retries:      parseInt(gv('s-max-retries'))  || 3,
@@ -2487,6 +2539,7 @@ async function refreshServerStatus() {
     set('dot-faceswap',    'label-faceswap',     d.faceswap_locale);
     set('dot-qwen',        'label-qwen',         d.qwen_locale);
     set('dot-tts-locale',  'label-tts-locale',   d.tts_locale);
+    set('dot-silero-locale', 'label-silero-locale', d.silero_locale);
     set('dot-t2i',         'label-t2i',          d.t2i_locale);
     if (d.t2i_locale) fetchT2iModels();
     document.getElementById('t2i-model-row').style.display = d.t2i_locale ? '' : 'none';
@@ -2571,7 +2624,10 @@ async function playTTS(text, btn) {
 async function refreshTtsVoices(showAlert) {
   const sel = document.getElementById('s-tts-narrator-voice');
   const current = sel.value;
-  const urlOverride = (document.getElementById('s-tts-url') || {}).value || '';
+  // The URL field of the ACTIVE provider acts as pre-save override
+  const prov = (document.getElementById('s-tts-provider') || {}).value || 'xtts';
+  const urlId = prov === 'silero' ? 's-silero-url' : 's-tts-url';
+  const urlOverride = (document.getElementById(urlId) || {}).value || '';
   const params = urlOverride ? '?url=' + encodeURIComponent(urlOverride) : '';
   try {
     const r = await fetch('/api/tts/voices' + params);
@@ -2611,12 +2667,31 @@ async function testNarratorVoice() {
   } catch(e) { alert('TTS error: ' + e.message); }
 }
 
-function onTtsEnvChange() {
-  const t = document.getElementById('s-tts-locale-env-type').value;
-  const row = document.getElementById('tts-locale-env-path-row');
-  const lbl = document.getElementById('tts-locale-env-path-label');
+// Show the field block of the selected TTS provider (and refresh the voice
+// list against that provider's server, silently).
+function onTtsProviderChange() {
+  const prov = (document.getElementById('s-tts-provider') || {}).value || 'xtts';
+  const x = document.getElementById('tts-xtts-fields');
+  const s = document.getElementById('tts-silero-fields');
+  if (x) x.style.display = prov === 'silero' ? 'none' : '';
+  if (s) s.style.display = prov === 'silero' ? '' : 'none';
+  if (typeof refreshTtsVoices === 'function') refreshTtsVoices(false);
+}
+
+function toggleEnvRow(typeId, rowId, labelId) {
+  const t = document.getElementById(typeId).value;
+  const row = document.getElementById(rowId);
+  const lbl = document.getElementById(labelId);
   row.style.display = t && t !== 'system' ? '' : 'none';
   if (lbl) lbl.textContent = t === 'conda' ? 'Env name' : 'Path';
+}
+
+function onTtsEnvChange() {
+  toggleEnvRow('s-tts-locale-env-type', 'tts-locale-env-path-row', 'tts-locale-env-path-label');
+}
+
+function onSileroEnvChange() {
+  toggleEnvRow('s-silero-locale-env-type', 'silero-locale-env-path-row', 'silero-locale-env-path-label');
 }
 
 // ==========================================================================
