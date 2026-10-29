@@ -16,6 +16,13 @@ Usage:
 import argparse
 import sys
 
+# Windows consoles with a legacy codepage (e.g. CP1251) cannot encode the
+# box-drawing characters below; force UTF-8 stdio.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 try:
     import requests
 except ImportError:
