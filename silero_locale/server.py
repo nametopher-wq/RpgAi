@@ -12,6 +12,16 @@ Model: Silero TTS via torch.hub (snakers4/silero-models), loaded lazily per
 language on first request and cached in memory. First request for a language
 also downloads the model weights (~100-300 MB) into the torch hub cache.
 
+Text handling:
+- 'ru' requests: Latin characters are transliterated to Cyrillic (John →
+  Джон) — the models' alphabet filter would otherwise drop them.
+- Unsupported languages (e.g. 'it' — Silero has no Italian model) fall back
+  to the server's --language with accented Latin folded to ASCII ("Così" →
+  "Cosi"), so an approximation is still voiced; the substitution is logged.
+- If the model's alphabet filter leaves nothing to synthesize, /synthesize
+  returns 422 with an explanatory message (use the 'xtts' provider for
+  languages outside Silero's set: ru en de es fr ua uz).
+
 Recommended launch:
   python server.py --host 0.0.0.0
 
@@ -32,6 +42,7 @@ import argparse
 import io
 import os
 import sys
+import unicodedata
 
 # Windows consoles with a legacy codepage (e.g. CP1251) cannot encode Cyrillic
 # log output; force UTF-8 stdio so prints never crash the request handler.
@@ -100,6 +111,55 @@ print(f"  Port:      {ARGS.port}")
 print(f"  Language:  {ARGS.language}")
 print(f"  Rate:      {ARGS.sample_rate}")
 print("==============================================")
+
+# ---------------------------------------------------------------------------
+# Latin → Cyrillic transliteration for 'ru' requests. Silero's alphabet filter
+# silently DROPS Latin letters from Russian text (and rejects Latin-only text
+# outright), so names like "John" would vanish from the audio. Transliterating
+# them keeps the words voiced ("Джон").
+# ---------------------------------------------------------------------------
+_RU_MULTI = [("shch", "щ"), ("sch", "щ"), ("zh", "ж"), ("kh", "х"), ("yo", "ё"),
+             ("ts", "ц"), ("ch", "ч"), ("sh", "ш"), ("yu", "ю"), ("ya", "я"),
+             ("ju", "ю"), ("ja", "я")]
+_RU_SINGLE = dict(a="а", b="б", c="к", d="д", e="е", f="ф", g="г", h="х", i="и",
+                  j="дж", k="к", l="л", m="м", n="н", o="о", p="п", q="к", r="р",
+                  s="с", t="т", u="у", v="в", w="в", x="кс", y="й", z="з")
+
+def transliterate_ru(text: str) -> str:
+    out = []
+    i = 0
+    lower = text.lower()
+    while i < len(text):
+        for pair, cyr in _RU_MULTI:
+            if lower.startswith(pair, i):
+                out.append(cyr.upper() if text[i:i+len(pair)].isupper() else cyr)
+                i += len(pair)
+                break
+        else:
+            ch = lower[i]
+            if ch in _RU_SINGLE:
+                out.append(_RU_SINGLE[ch].upper() if text[i].isupper() else _RU_SINGLE[ch])
+            else:
+                out.append(text[i])
+            i += 1
+    return "".join(out)
+
+# Accented Latin → plain ASCII, used when an unsupported language (e.g. 'it',
+# which has no Silero model) falls back to a Latin-alphabet model: "Così
+# parlò" becomes "Cosi parlo" so at least *something* gets voiced. The
+# pronunciation follows the fallback language, not the original — logged.
+_ACCENTS = {"ß": "ss", "æ": "ae", "œ": "oe", "ø": "o", "å": "a", "Æ": "Ae",
+            "Œ": "Oe", "Ø": "O", "Å": "A", "ð": "d", "Ð": "D", "þ": "th", "Þ": "Th"}
+
+def fold_accents(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    folded = "".join(c for c in decomposed if not unicodedata.combining(c))
+    for k, v in _ACCENTS.items():
+        folded = folded.replace(k, v)
+    return folded
+
+def _supported_list() -> str:
+    return ", ".join(sorted(LANGUAGE_MODELS))
 
 # ============================================================
 # ─── MODEL CACHE ────────────────────────────────────────────
@@ -175,13 +235,17 @@ def _pick_sample_rate(model, hub_rate, probe_voice, language: str) -> int:
 
 def _resolve_language(requested: str) -> str:
     """Map a request language to a loaded model language, falling back to the
-    server default. Logs the substitution so a misconfigured game language
-    (e.g. 'it', which Silero does not cover) is visible instead of silent."""
+    server default. Logs the substitution (once per language) so a
+    misconfigured game language — e.g. 'it', which Silero does not cover —
+    is visible instead of silent."""
     lang = (requested or ARGS.language).lower() or ARGS.language
     if lang in LANGUAGE_MODELS:
         return lang
     if lang not in _language_warnings:
-        print(f"[warn] language '{lang}' not supported by Silero — falling back to '{ARGS.language}'")
+        print(f"[warn] language '{lang}' is not supported by Silero "
+              f"(supported: {_supported_list()}) — falling back to '{ARGS.language}'; "
+              f"accents will be folded but pronunciation will follow the fallback language. "
+              f"For full quality use the 'xtts' provider, which covers 17 languages.")
         _language_warnings.add(lang)
     return ARGS.language
 
@@ -208,12 +272,32 @@ async def synthesize(request: Request):
     language  = form.get("language", ARGS.language)
     if not text.strip():
         raise HTTPException(400, "Empty text")
+    requested = (language or ARGS.language).lower()
     lang = _resolve_language(language)
+    fell_back = lang != requested
+    if fell_back:
+        # Unsupported original language: fold accented Latin to plain ASCII so
+        # the fallback model voices at least an approximation ("Cosi parlo").
+        text = fold_accents(text)
+    elif lang == "ru":
+        # Russian game: Latin names/words would be dropped by the alphabet
+        # filter — transliterate them to Cyrillic instead.
+        text = transliterate_ru(text)
     model, speakers, sample_rate = _load_language(lang)
     voice = voice_id if voice_id else speakers[0]
     try:
         with torch.no_grad():
             wav = _apply_tts(model, text, sample_rate, voice)
+    except ValueError as e:
+        if str(e) == "":
+            # The model's alphabet filter removed every character.
+            raise HTTPException(422,
+                f"Text has no characters the '{lang}' model can synthesize. "
+                f"Silero supports: {_supported_list()}. For other languages "
+                f"(e.g. Italian) use the 'xtts' TTS provider instead of 'silero'.")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Synthesis failed: {e}")
     except Exception as e:
         import traceback
         traceback.print_exc()
