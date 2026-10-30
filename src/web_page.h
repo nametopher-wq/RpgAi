@@ -974,16 +974,23 @@ let histIdx      = -1;
 /* ================================================================
    Utilities
    ================================================================ */
+// Message classes that get a "read aloud" TTS button: narrative game content
+// (narration, slash-command output like /observe, game over). Excluded on
+// purpose: msg-player (you typed it yourself), msg-system (status chatter),
+// msg-system thinking (the Processing... indicator), msg-error.
+const TTS_READ_ALOUD = { 'msg-narration': 1, 'msg-command': 1, 'msg-gameover': 1 };
+
 function addMsg(cls, text) {
   const d = document.createElement('div');
   d.className = 'msg ' + cls;
-  if (cls === 'msg-narration' && ttsNarratorVoice) {
+  const base = cls.split(' ')[0];
+  if (TTS_READ_ALOUD[base] && ttsNarratorVoice) {
     const span = document.createElement('span');
     span.textContent = text;
     d.appendChild(span);
     const btn = document.createElement('button');
     btn.className = 'tts-btn';
-    btn.title = 'Play narration';
+    btn.title = 'Read aloud';
     btn.textContent = '🔊';
     btn.onclick = () => playTTS(text, btn);
     d.appendChild(btn);
