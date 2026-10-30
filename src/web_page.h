@@ -106,7 +106,7 @@ std::string main_page = R"HTML(<!DOCTYPE html>
          display: flex; flex-direction: column; gap: 12px;
          scroll-behavior: smooth; }
   .msg { border-radius: var(--radius); padding: 12px 14px;
-         line-height: 1.65; max-width: 820px; }
+         line-height: 1.65; max-width: 820px; position: relative; }
   .msg-narration { background: var(--surface); border-left: 3px solid var(--accent);
                    color: var(--text); white-space: pre-wrap; position: relative; }
   .tts-btn { position: absolute; top: 8px; right: 8px; background: none; border: none;
