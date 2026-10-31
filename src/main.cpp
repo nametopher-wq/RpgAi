@@ -1547,8 +1547,27 @@ bool parse_args(int argc, char* argv[]) {
 // main
 // ===========================================================================
 
+// Directory containing the running executable (set at startup). The installer
+// layout puts the locale servers next to the exe, while the repo/dev layout
+// puts them next to scripts/.. — see the /api/servers/action route.
+static std::string g_exe_dir;
+
 int main(int argc, char* argv[]) {
     init_ansi();
+
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+#ifdef _WIN32
+        wchar_t buf[MAX_PATH];
+        if (GetModuleFileNameW(nullptr, buf, MAX_PATH) > 0)
+            g_exe_dir = fs::path(buf).parent_path().string();
+        else
+#endif
+        if (argc > 0 && argv[0])
+            g_exe_dir = fs::absolute(fs::path(argv[0]), ec).parent_path().string();
+        for (auto& c : g_exe_dir) if (c == '\\') c = '/';
+    }
 
     load_settings_file();              // base: file-saved settings
     if (!parse_args(argc, argv)) return 1;  // CLI overrides file
@@ -5902,25 +5921,44 @@ sol::table result = f_result;
                     return "./";
                 }();
 
+                // The repo/dev layout puts the locale servers next to scripts/..;
+                // the installed (launcher) layout puts them next to the executable,
+                // with the workspace (scripts/saves) in the user's Documents.
+                // Deriving the path from the wrong root makes the spawn fail
+                // (ERROR_DIRECTORY from CreateProcess on Windows, failed cd in
+                // the POSIX shell-out) — pick the root that actually contains
+                // the server.
+                auto locale_script = [&](const char* dir, const char* script) -> std::string {
+                    namespace fs = std::filesystem;
+                    for (const std::string* root : {&srv_base, &g_exe_dir}) {
+                        if (!root->empty()) {
+                            fs::path p = fs::path(*root) / dir / script;
+                            std::error_code ec;
+                            if (fs::exists(p, ec)) return p.string();
+                        }
+                    }
+                    return (fs::path(srv_base) / dir / script).string();
+                };
+
                 std::string script_path, log_file, pip_deps;
                 if (server == "faceswap_locale") {
-                    script_path = srv_base + "faceswap_locale/server.py";
+                    script_path = locale_script("faceswap_locale", "server.py");
                     log_file    = "/tmp/rpgai_faceswap_locale.log";
                     pip_deps    = "insightface onnxruntime fastapi uvicorn python-multipart pillow numpy opencv-python-headless";
                 } else if (server == "qwen_locale") {
-                    script_path = srv_base + "qwen_locale/server_locale.py";
+                    script_path = locale_script("qwen_locale", "server_locale.py");
                     log_file    = "/tmp/rpgai_qwen.log";
                     pip_deps    = "diffusers torch transformers accelerate peft bitsandbytes huggingface_hub fastapi uvicorn pillow python-multipart";
                 } else if (server == "t2i_locale") {
-                    script_path = srv_base + "t2i_locale/server.py";
+                    script_path = locale_script("t2i_locale", "server.py");
                     log_file    = "/tmp/rpgai_t2i.log";
                     pip_deps    = "diffusers torch transformers accelerate fastapi uvicorn pillow pydantic";
                 } else if (server == "rembg_locale") {
-                    script_path = srv_base + "rembg_locale/server.py";
+                    script_path = locale_script("rembg_locale", "server.py");
                     log_file    = "/tmp/rpgai_rembg.log";
                     pip_deps    = "transparent-background fastapi uvicorn python-multipart pillow numpy";
                 } else if (server == "tts_locale") {
-                    script_path = srv_base + "tts_locale/server.py";
+                    script_path = locale_script("tts_locale", "server.py");
                     log_file    = "/tmp/rpgai_tts.log";
                     // transformers pinned <4.37: BeamSearchScorer removed from public API in 4.37+.
                     // After install, run tts_locale/patch_tts_compat.py to fix torch.load weights_only
