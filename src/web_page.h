@@ -430,7 +430,7 @@ std::string main_page = R"HTML(<!DOCTYPE html>
 
     <!-- In-game section -->
     <div id="section-game">
-      <div class="sb-label">Script attivo</div>
+      <div class="sb-label">Active script</div>
       <div id="info-script" class="sb-value">—</div>
       <div class="sb-label">Save File</div>
       <div id="info-save" class="sb-value">—</div>
@@ -1101,7 +1101,7 @@ function showPreUI() {
 function showGameUI(scriptName, saveName) {
   secPre.style.display  = 'none';
   secGame.style.display = 'flex';
-  infoScript.textContent = scriptName || 'sconosciuto';
+  infoScript.textContent = scriptName || 'unknown';
   infoSave.textContent   = saveName   || '(default)';
 }
 
@@ -1141,7 +1141,7 @@ function addImage(b64, caption, mime, tooltip, utcAt) {
   // Hide button (top-left, visible on hover)
   const hideBtn = document.createElement('button');
   hideBtn.className = 'img-hide-btn';
-  hideBtn.textContent = '✕ nascondi';
+  hideBtn.textContent = '✕ hide';
   hideBtn.title = 'Rimuovi dalla storia (permanente per questo salvataggio)';
   hideBtn.onclick = (e) => {
     e.stopPropagation();
