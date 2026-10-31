@@ -5954,6 +5954,23 @@ sol::table result = f_result;
                     if (reqEnvType == "uv")    return "uv pip";
                     return "pip3";
                 };
+                // Full "<prefix> install" command. uv-created venvs ship without
+                // pip (unless seeded); drive those through `uv pip --python`
+                // instead of the missing venv pip.
+                auto pip_install_cmd = [&]() -> std::string {
+                    if (reqEnvType == "venv") {
+                        namespace fs = std::filesystem;
+                        std::error_code ec;
+#ifdef _WIN32
+                        fs::path p = fs::path(reqEnvPath) / "Scripts" / "pip.exe";
+#else
+                        fs::path p = fs::path(reqEnvPath) / "bin" / "pip";
+#endif
+                        if (fs::exists(p, ec)) return p.string() + " install";
+                        return "uv pip install --python \"" + py_cmd() + "\"";
+                    }
+                    return pip_cmd() + " install";
+                };
                 // On Linux, system Python is often "externally managed" — pass the override flag.
                 auto pip_install_flags = [&]() -> std::string {
 #ifdef __linux__
@@ -5992,7 +6009,7 @@ sol::table result = f_result;
                         // Create env if missing, then install deps
                         cmd = "nohup bash -c \"(conda env list | grep -q '^" + env + " ' || conda create -n " + env + " python=3.10 -y) && conda run -n " + env + " pip install " + pip_deps + "\" > " + log_file + " 2>&1 &";
                     } else {
-                        cmd = "nohup " + pip_cmd() + " install " + pip_deps + pip_install_flags + " > " + log_file + " 2>&1 &";
+                        cmd = "nohup " + pip_install_cmd() + " " + pip_deps + pip_install_flags + " > " + log_file + " 2>&1 &";
                     }
                     system(cmd.c_str());
                     result["success"] = true;
